@@ -244,23 +244,53 @@ curl http://localhost:8000/health
 
 ---
 
-## Cloud Deployment — Render
+## Cloud Deployment — Railway
 
-The repo includes a `render.yaml` Blueprint. All services are pre-configured to pull from Docker Hub (`docker.io/sahojit/`).
+The repo includes a `railway.toml` for automatic detection. Deploy the full stack in Railway by creating one project with multiple services.
 
-**One-click deploy:**
+### Step 1 — Create a Railway project
 
-1. Go to [render.com](https://render.com) → **New → Blueprint**
-2. Connect this repository
-3. Render provisions PostgreSQL, Ollama (with persistent 10 GB disk), MLflow, API, and Dashboard automatically
+1. Go to [railway.app](https://railway.app) → **New Project**
+2. Choose **Deploy from GitHub repo** → connect this repository
 
-| Service | Plan | Notes |
+### Step 2 — Add a PostgreSQL database
+
+In your project → **New Service → Database → PostgreSQL**. Railway injects `DATABASE_URL` automatically.
+
+### Step 3 — Deploy each service
+
+Each service below points to the same repo with a different Dockerfile:
+
+| Service | Dockerfile | Notes |
 |---|---|---|
-| PostgreSQL | Free | Managed database |
-| `rag-ollama` | Standard | Pulls llama3 on first start, cached to disk |
-| `rag-mlflow` | Starter | File-based tracking |
-| `rag-api` | Standard | 2 GB RAM required for ML models |
-| `rag-dashboard` | Starter | Streamlit frontend |
+| `rag-api` | `Dockerfile` | Main API — set env vars below |
+| `rag-dashboard` | `Dockerfile.dashboard` | Set `API_URL` to internal API URL |
+| `rag-ollama` | `Dockerfile.ollama` | Add a 10 GB Volume at `/root/.ollama` |
+| `rag-mlflow` | Use image `ghcr.io/mlflow/mlflow:v2.13.0` | Add 5 GB Volume at `/mlflow` |
+
+For each service: **Settings → Build → Dockerfile Path** → set the path above.
+
+### Step 4 — Set environment variables for `rag-api`
+
+```
+POSTGRES_HOST       → from Railway PostgreSQL service (Variables tab)
+POSTGRES_PORT       → 5432
+POSTGRES_USER       → postgres
+POSTGRES_PASSWORD   → from Railway PostgreSQL service
+POSTGRES_DB         → railway
+OLLAMA_BASE_URL     → http://rag-ollama.railway.internal:11434
+MLFLOW_TRACKING_URI → http://rag-mlflow.railway.internal:5000
+OLLAMA_MODEL        → llama3
+ENVIRONMENT         → production
+```
+
+### Step 5 — Set environment variables for `rag-dashboard`
+
+```
+API_URL → https://rag-api.up.railway.app   (your API public URL)
+```
+
+Railway auto-assigns public URLs to each web service. Internal service-to-service communication uses `.railway.internal` private networking.
 
 ---
 
