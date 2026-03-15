@@ -1,0 +1,6 @@
+FROM ollama/ollama:latest
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+COPY scripts/start_ollama.sh /start_ollama.sh
+RUN chmod +x /start_ollama.sh
+EXPOSE 11434
+ENTRYPOINT ["/start_ollama.sh"]

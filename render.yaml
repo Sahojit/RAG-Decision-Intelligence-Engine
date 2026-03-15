@@ -1,0 +1,106 @@
+databases:
+  - name: rag-postgres
+    databaseName: rag_decision_engine
+    user: postgres
+    plan: free
+
+services:
+
+  - type: pserv
+    name: rag-ollama
+    runtime: docker
+    image:
+      url: docker.io/sahojit/rag-ollama:latest
+    plan: standard
+    disk:
+      name: ollama-data
+      mountPath: /root/.ollama
+      sizeGB: 10
+    envVars:
+      - key: PORT
+        value: 11434
+
+  - type: pserv
+    name: rag-mlflow
+    runtime: docker
+    image:
+      url: ghcr.io/mlflow/mlflow:v2.13.0
+    plan: starter
+    disk:
+      name: mlflow-data
+      mountPath: /mlflow
+      sizeGB: 5
+    startCommand: >
+      mlflow server
+      --backend-store-uri /mlflow/runs
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 10000
+    envVars:
+      - key: PORT
+        value: 10000
+
+  - type: web
+    name: rag-api
+    runtime: docker
+    image:
+      url: docker.io/sahojit/rag-api:latest
+    plan: standard
+    healthCheckPath: /health
+    envVars:
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: rag-postgres
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: rag-postgres
+          property: port
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: rag-postgres
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: rag-postgres
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: rag-postgres
+          property: database
+      - key: OLLAMA_BASE_URL
+        value: http://rag-ollama:11434
+      - key: OLLAMA_MODEL
+        value: llama3
+      - key: MLFLOW_TRACKING_URI
+        value: http://rag-mlflow:10000
+      - key: MLFLOW_EXPERIMENT
+        value: evidence-reliability
+      - key: ML_MODEL_TYPE
+        value: xgboost
+      - key: RETRIEVAL_TOP_K
+        value: 20
+      - key: RERANK_TOP_K
+        value: 10
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PORT
+        value: 8000
+
+  - type: web
+    name: rag-dashboard
+    runtime: docker
+    image:
+      url: docker.io/sahojit/rag-dashboard:latest
+    plan: starter
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: API_URL
+        fromService:
+          name: rag-api
+          type: web
+          property: host
+      - key: PORT
+        value: 8501

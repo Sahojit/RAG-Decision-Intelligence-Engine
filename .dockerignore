@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Logs
+logs/
+*.log
+nohup.out
+
+# Test / coverage artefacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Local secrets (never bake into image)
+.env.local
+.env.*.local
+
+# MLflow local runs (use volume mount instead)
+mlruns/
+
+# Large local model cache (pulled at runtime / volume mount)
+.cache/
+models/*.pkl
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

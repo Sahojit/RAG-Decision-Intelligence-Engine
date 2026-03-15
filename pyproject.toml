@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-decision-engine"
+version = "1.0.0"
+description = "Production-grade RAG Decision Intelligence Engine"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rag_decision_engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["rag_decision_engine/tests"]
+asyncio_mode = "auto"
+log_cli = true
+log_cli_level = "WARNING"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict = false
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I"]
+ignore = ["E501"]

@@ -1,0 +1,48 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# Data & models (large binaries — store in DVC/S3)
+data/embeddings/
+data/raw/
+models/*.pkl
+
+# Logs
+logs/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Streamlit
+.streamlit/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Test artefacts
+.pytest_cache/
+htmlcov/
+.coverage
+evaluation_results.json

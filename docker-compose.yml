@@ -1,0 +1,127 @@
+version: "3.9"
+
+# ── Networks ────────────────────────────────────────────────────────────────────
+networks:
+  rag_net:
+    driver: bridge
+
+# ── Volumes ─────────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  mlflow_data:
+  faiss_data:
+  ollama_data:
+
+# ── Services ────────────────────────────────────────────────────────────────────
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: rag_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rag_decision_engine
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5440:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_net
+
+  # ── MLflow tracking server ─────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.0
+    container_name: rag_mlflow
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --backend-store-uri /mlflow/runs
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    volumes:
+      - mlflow_data:/mlflow
+    ports:
+      - "6001:5000"
+    networks:
+      - rag_net
+
+  # ── Ollama LLM runtime ─────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag_ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11435:11434"
+    networks:
+      - rag_net
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ── FastAPI backend ────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rag_decision_engine
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      ENVIRONMENT: production
+    volumes:
+      - faiss_data:/app/data/embeddings
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+    ports:
+      - "8080:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Streamlit dashboard ────────────────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: rag_dashboard
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "8090:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - rag_net
