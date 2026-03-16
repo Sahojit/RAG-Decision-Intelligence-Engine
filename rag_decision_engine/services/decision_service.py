@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Optional
 from langchain_community.llms import Ollama
 from langchain_core.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from pydantic import BaseModel, Field
 from rag_decision_engine.config import settings
 from rag_decision_engine.config.logging_config import get_logger
@@ -198,15 +197,15 @@ Recommended Decision: {recommendation}
 
 Reasoning (be specific and evidence-based):""",
         )
-        chain = LLMChain(llm=self._llm, prompt=prompt)
+        chain = prompt | self._llm
         try:
-            result = chain.run(
-                query=query,
-                options=options_text,
-                contradiction=contradiction_text,
-                recommendation=recommendation or "Insufficient evidence",
-            )
-            return result.strip()
+            result = chain.invoke({
+                "query": query,
+                "options": options_text,
+                "contradiction": contradiction_text,
+                "recommendation": recommendation or "Insufficient evidence",
+            })
+            return result.strip() if isinstance(result, str) else str(result).strip()
         except Exception as exc:
             logger.warning("llm_reasoning_failed", error=str(exc))
             return self._fallback_reasoning(options, contradiction, recommendation)

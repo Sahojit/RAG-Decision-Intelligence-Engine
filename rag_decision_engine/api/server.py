@@ -1,9 +1,11 @@
+import asyncio
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Any
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from rag_decision_engine.config import settings
@@ -24,11 +26,17 @@ class IngestRequest(BaseModel):
     texts: list[str] = Field(default_factory=list)
     file_paths: list[str] = Field(default_factory=list)
     force_reingest: bool = False
+_ready = False
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _ready
     logger.info("startup", app=settings.app_name, version=settings.app_version)
-    app.state.decision_service = DecisionService()
-    app.state.ingest_pipeline = IngestionPipeline()
+    loop = asyncio.get_event_loop()
+    def _load():
+        app.state.decision_service = DecisionService()
+        app.state.ingest_pipeline = IngestionPipeline()
+    await loop.run_in_executor(None, _load)
+    _ready = True
     logger.info("services_ready")
     yield
     logger.info("shutdown")
@@ -88,6 +96,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}")
     @app.get("/health")
     async def health() -> dict:
+        if not _ready:
+            return JSONResponse(status_code=503, content={"status": "loading"})
         return {
             "status": "ok",
             "app": settings.app_name,
