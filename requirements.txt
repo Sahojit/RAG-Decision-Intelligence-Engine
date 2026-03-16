@@ -1,47 +1,28 @@
-# ── Core ──────────────────────────────────────────────────────────────────────
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
 python-dotenv>=1.0
 pydantic>=2.0
 pydantic-settings>=2.0
-
-# ── API ───────────────────────────────────────────────────────────────────────
 fastapi>=0.111
 uvicorn[standard]>=0.30
-httpx>=0.27              # async HTTP client for tests
-
-# ── Dashboard ─────────────────────────────────────────────────────────────────
+httpx>=0.27
 streamlit>=1.35
 requests>=2.31
-
-# ── RAG / LangChain ───────────────────────────────────────────────────────────
 langchain>=0.2
 langchain-community>=0.2
 langchain-core>=0.2
 langchain-text-splitters>=0.2
-
-# ── Embeddings & retrieval ────────────────────────────────────────────────────
 sentence-transformers>=3.0
-faiss-cpu>=1.8           # use faiss-gpu for GPU systems
+faiss-cpu>=1.8
 rank-bm25>=0.2
-
-# ── ML models ────────────────────────────────────────────────────────────────
 scikit-learn>=1.5
 xgboost>=2.0
 numpy>=1.26
 pandas>=2.2
-
-# ── PDF parsing ───────────────────────────────────────────────────────────────
 pypdf>=4.0
-
-# ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
-
-# ── Observability / logging ───────────────────────────────────────────────────
 structlog>=24.0
-
-# ── Experiment tracking ───────────────────────────────────────────────────────
 mlflow>=2.13
-
-# ── Testing ───────────────────────────────────────────────────────────────────
 pytest>=8.0
 pytest-asyncio>=0.23
