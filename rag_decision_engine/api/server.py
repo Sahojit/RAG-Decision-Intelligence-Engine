@@ -31,7 +31,7 @@ _ready = False
 async def lifespan(app: FastAPI):
     global _ready
     logger.info("startup", app=settings.app_name, version=settings.app_version)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     def _load():
         app.state.decision_service = DecisionService()
         app.state.ingest_pipeline = IngestionPipeline()

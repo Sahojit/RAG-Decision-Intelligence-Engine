@@ -19,11 +19,17 @@ RUN useradd -m -u 1001 appuser && \
     mkdir -p /app/data /app/logs /app/models && \
     chown -R appuser:appuser /app
 USER appuser
+RUN python -c "\
+from sentence_transformers import SentenceTransformer, CrossEncoder; \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
+CrossEncoder('cross-encoder/nli-deberta-v3-small'); \
+print('Models cached.')"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     ENVIRONMENT=production \
     LOG_LEVEL=INFO
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
-CMD ["sh", "-c", "uvicorn rag_decision_engine.api.server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"]
+CMD ["sh", "-c", "uvicorn rag_decision_engine.api.server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
