@@ -104,9 +104,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}")
     @app.get("/health")
     async def health():
+        return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
+    @app.get("/ready")
+    async def ready():
         if not _ready:
             return JSONResponse(status_code=503, content={"status": "loading"})
-        return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
+        return {"status": "ready"}
     @app.get("/metrics")
     async def metrics():
         req_count = _metrics["request_count"] or 1
