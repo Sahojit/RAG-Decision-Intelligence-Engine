@@ -17,7 +17,6 @@ langchain>=0.2
 langchain-community>=0.2
 langchain-core>=0.2
 langchain-text-splitters>=0.2
-langchain-classic>=1.0
 
 # ── Embeddings & retrieval ────────────────────────────────────────────────────
 sentence-transformers>=3.0

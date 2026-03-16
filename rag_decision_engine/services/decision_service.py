@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 from langchain_community.llms import Ollama
 from langchain_core.prompts import PromptTemplate
-from langchain_classic.chains import LLMChain
+from langchain.chains import LLMChain
 from pydantic import BaseModel, Field
 from rag_decision_engine.config import settings
 from rag_decision_engine.config.logging_config import get_logger
