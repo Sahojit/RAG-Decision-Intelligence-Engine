@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from typing import Any
@@ -45,11 +44,11 @@ with st.sidebar:
                     st.session_state["query_input"] = entry["query"]
                     st.rerun()
 API_URL = api_url.rstrip("/")
-def call_decision(query: str) -> dict[str, Any] | None:
+def call_decision(query: str, use_live_retrieval: bool = False) -> dict[str, Any] | None:
     try:
         resp = requests.post(
             f"{API_URL}/decision",
-            json={"query": query},
+            json={"query": query, "use_live_retrieval": use_live_retrieval},
             timeout=120,
         )
         resp.raise_for_status()
@@ -111,11 +110,45 @@ with tab_decision:
         height=80,
         placeholder="e.g. Should I use XGBoost or Random Forest for tabular datasets?",
     )
+    with st.expander("🔬 Retrieval Options & Filters", expanded=False):
+        use_live = st.toggle(
+            "Use Live Research Data (arXiv + Semantic Scholar)",
+            value=False,
+            help="Fetches fresh papers from arXiv and Semantic Scholar APIs dynamically.",
+        )
+        st.caption("Tip: include phrases like 'research papers after 2020 with citations' in your query to auto-apply filters.")
+        fcol1, fcol2, fcol3 = st.columns(3)
+        with fcol1:
+            filter_hint_source = st.selectbox(
+                "Source type hint",
+                ["(auto-detect)", "research_paper", "blog", "documentation", "forum"],
+            )
+        with fcol2:
+            filter_hint_year = st.number_input(
+                "Min year hint",
+                min_value=2000,
+                max_value=2026,
+                value=2000,
+                step=1,
+            )
+        with fcol3:
+            filter_hint_citations = st.checkbox("Must have citations")
+        if filter_hint_source != "(auto-detect)" or filter_hint_year > 2000 or filter_hint_citations:
+            hint_parts = []
+            if filter_hint_source != "(auto-detect)":
+                hint_parts.append(f"only {filter_hint_source.replace('_', ' ')}s")
+            if filter_hint_year > 2000:
+                hint_parts.append(f"after {filter_hint_year}")
+            if filter_hint_citations:
+                hint_parts.append("with citations")
+            if hint_parts:
+                st.info(f"Filter hint active — append to query: *\"{', '.join(hint_parts)}\"*")
     run_btn = st.button("🚀 Analyse", type="primary", use_container_width=True)
     if run_btn and query.strip():
-        with st.spinner("Running decision pipeline…"):
+        spinner_msg = "Running decision pipeline with live retrieval…" if use_live else "Running decision pipeline…"
+        with st.spinner(spinner_msg):
             t0 = time.perf_counter()
-            report = call_decision(query.strip())
+            report = call_decision(query.strip(), use_live_retrieval=use_live)
             elapsed = round((time.perf_counter() - t0) * 1000)
         if report:
             st.session_state.search_history.append({
@@ -125,6 +158,19 @@ with tab_decision:
                 "ts": time.strftime("%H:%M:%S"),
             })
             st.success(f"Report generated in **{elapsed} ms**")
+            live_used = report.get("live_retrieval_used", False)
+            live_count = report.get("live_docs_count", 0)
+            local_count = report.get("local_docs_count", 0)
+            filters_applied = report.get("filters_applied", {})
+            active_filters = {k: v for k, v in filters_applied.items() if v is not None}
+            src_col1, src_col2, src_col3 = st.columns(3)
+            src_col1.metric("Local Docs", local_count)
+            src_col2.metric("Live API Docs", live_count, delta="arXiv + S2" if live_count else None)
+            src_col3.metric("Filters Active", len(active_filters))
+            if active_filters:
+                st.info(f"Filters applied: {active_filters}")
+            if live_used and live_count == 0:
+                st.warning("Live retrieval was triggered but no papers were returned (API timeout or no results).")
             st.divider()
             recommended = report.get("recommended_option", "N/A")
             confidence = report.get("recommendation_confidence", 0.0)

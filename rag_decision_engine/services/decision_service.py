@@ -13,6 +13,8 @@ from rag_decision_engine.services.contradiction_service import (
     ContradictionReport,
 )
 from rag_decision_engine.services.decision_policy import DecisionPolicyEngine
+from rag_decision_engine.services.live_retrieval import detect_query_type, fetch_live_documents_sync
+from rag_decision_engine.services.query_filter_parser import QueryFilters, extract_filters
 from rag_decision_engine.services.reflection_service import ReflectionService
 from rag_decision_engine.services.reliability_service import (
     ReliabilityService,
@@ -41,6 +43,10 @@ class DecisionReport(BaseModel):
     reasoning: str
     latency_ms: float
     model_used: str = settings.ollama_model
+    filters_applied: dict = Field(default_factory=dict)
+    live_retrieval_used: bool = False
+    live_docs_count: int = 0
+    local_docs_count: int = 0
 def parse_options(query: str) -> list[str]:
     import re
     pattern = re.compile(r"\bor\b|\bvs\.?\b|\bversus\b", re.I)
@@ -58,16 +64,30 @@ class DecisionService:
         self._policy = DecisionPolicyEngine()
         self._reflection = ReflectionService()
         self._llm = self._build_llm()
-    def decide(self, query: str) -> DecisionReport:
+    def decide(self, query: str, use_live_retrieval: bool = False) -> DecisionReport:
         t_start = time.perf_counter()
-        logger.info("decision_start", query=query[:120])
+        logger.info("decision_start", query=query[:120], use_live_retrieval=use_live_retrieval)
+        filters: QueryFilters = extract_filters(query)
+        dynamic_docs = []
+        live_retrieval_triggered = False
+        if use_live_retrieval or detect_query_type(query):
+            live_retrieval_triggered = True
+            dynamic_docs = fetch_live_documents_sync(query)
+            logger.info("live_retrieval_complete", docs_fetched=len(dynamic_docs))
         options = parse_options(query)
         logger.info("options_parsed", options=options)
         option_evidences: list[OptionEvidence] = []
         all_scored: list[ScoredEvidence] = []
+        local_count = 0
         for option in options:
             option_query = f"{query} {option}"
-            raw_docs = self._retriever.search(option_query, top_k=settings.rerank_top_k)
+            raw_docs = self._retriever.search(
+                option_query,
+                top_k=settings.rerank_top_k,
+                filters=filters if not filters.is_empty() else None,
+                dynamic_docs=dynamic_docs if dynamic_docs else None,
+            )
+            local_count += sum(1 for d in raw_docs if d.retriever not in ("live_arxiv", "live_semantic_scholar"))
             reranked = self._reranker.rerank(option_query, raw_docs)
             scored = self._reliability.score_evidence(reranked)
             all_scored.extend(scored)
@@ -119,6 +139,10 @@ class DecisionService:
             reflection_reason=reflection_result.reflection_reason,
             reasoning=reasoning,
             latency_ms=latency_ms,
+            filters_applied=filters.to_dict(),
+            live_retrieval_used=live_retrieval_triggered,
+            live_docs_count=len(dynamic_docs),
+            local_docs_count=local_count,
         )
         logger.info(
             "decision_complete",

@@ -45,18 +45,32 @@ class HybridRetriever:
         query: str,
         top_k: int | None = None,
         candidate_k: int | None = None,
+        filters=None,
+        dynamic_docs: list[RetrievedDocument] | None = None,
     ) -> list[RetrievedDocument]:
+        from rag_decision_engine.retrieval.metadata_filter import apply_metadata_filter
         k = top_k or settings.rerank_top_k
         c_k = candidate_k or settings.retrieval_top_k
         t0 = time.perf_counter()
         vector_results = self._vector.search(query, top_k=c_k)
         bm25_results = self._bm25.search(query, top_k=c_k)
         fused = self._reciprocal_rank_fusion(vector_results, bm25_results, top_k=k)
+        dynamic_count = 0
+        if dynamic_docs:
+            existing_ids = {d.chunk_id for d in fused}
+            new_dynamic = [d for d in dynamic_docs if d.chunk_id not in existing_ids]
+            fused = fused + new_dynamic
+            dynamic_count = len(new_dynamic)
+        unfiltered_count = len(fused)
+        if filters is not None and not filters.is_empty():
+            fused = apply_metadata_filter(fused, filters)
         logger.info(
             "hybrid_search",
             query_preview=query[:60],
             vector_hits=len(vector_results),
             bm25_hits=len(bm25_results),
+            dynamic_merged=dynamic_count,
+            unfiltered=unfiltered_count,
             fused_results=len(fused),
             elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
         )

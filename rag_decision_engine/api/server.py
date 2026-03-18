@@ -23,6 +23,7 @@ _decision_service = None
 _ingest_pipeline = None
 class DecisionRequest(BaseModel):
     query: str = Field(..., min_length=5, max_length=500)
+    use_live_retrieval: bool = False
 class IngestRequest(BaseModel):
     texts: list[str] = Field(default_factory=list)
     file_paths: list[str] = Field(default_factory=list)
@@ -79,7 +80,7 @@ def create_app() -> FastAPI:
         t0 = time.perf_counter()
         logger.info("decision_request", query=body.query)
         try:
-            report = _decision_service.decide(body.query)
+            report = _decision_service.decide(body.query, use_live_retrieval=body.use_live_retrieval)
             _metrics["decision_count"] += 1
             _metrics["total_latency_ms"] += (time.perf_counter() - t0) * 1000
             return report
