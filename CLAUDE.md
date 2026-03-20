@@ -131,13 +131,6 @@ curl http://localhost:8080/health
 - PostgreSQL: localhost:5440
 - Ollama: localhost:11435
 
-## Railway Deployment
-- `railway.toml` configured at repo root
-- Healthcheck path: `/health` (always 200)
-- Models download at runtime via daemon thread on first boot
-- Do NOT add model pre-download to Dockerfile — build containers OOM
-- Do NOT use GPU torch — Railway runs x86_64 Linux, CPU torch installs automatically
-
 ## Local Dev Setup
 ```bash
 python -m venv .venv && source .venv/bin/activate
