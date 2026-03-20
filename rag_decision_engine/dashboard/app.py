@@ -4,470 +4,306 @@ import time
 from typing import Any
 import requests
 import streamlit as st
+API_URL = os.environ.get("API_URL", "http://localhost:8080")
 st.set_page_config(
-    page_title="Evidentia — Decision Intelligence",
+    page_title="Evidentia — Tech Decision Engine",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 st.markdown("""
 <style>
-.decision-card {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border: 1px solid #0f3460;
+[data-testid="stAppViewContainer"] { background: #0f1117; }
+[data-testid="stSidebar"] { background: #1a1d27; border-right: 1px solid #2d2d3d; }
+.verdict-card {
+    background: linear-gradient(135deg, #1e2235 0%, #252840 100%);
+    border: 1px solid #3d4166;
     border-radius: 12px;
-    padding: 24px 28px;
-    margin-bottom: 16px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
 }
-.verdict-win {
-    font-size: 2.2rem;
-    font-weight: 800;
-    color: #00d4aa;
-    letter-spacing: -0.5px;
-}
-.verdict-inconclusive {
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: #f4a261;
-}
-.quality-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.82rem;
-    font-weight: 600;
-}
-.badge-high   { background: #003d2e; color: #00d4aa; border: 1px solid #00d4aa44; }
-.badge-medium { background: #2d2000; color: #f4a261; border: 1px solid #f4a26144; }
-.badge-low    { background: #2d0a0a; color: #e07070; border: 1px solid #e0707044; }
-.section-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    color: #888;
-    margin-bottom: 4px;
-}
-div[data-testid="stMetricValue"] { font-size: 1.5rem !important; font-weight: 700 !important; }
+.verdict-title { font-size: 13px; color: #8892b0; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
+.verdict-value { font-size: 34px; font-weight: 700; color: #e6edf3; margin-bottom: 4px; }
+.badge-strong { background: #1a3a2a; color: #3fb950; border: 1px solid #3fb950; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.badge-weak { background: #3a3010; color: #d29922; border: 1px solid #d29922; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.badge-inconclusive { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.quality-row { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.quality-item { background: #1e2235; border: 1px solid #2d3250; border-radius: 8px; padding: 12px 16px; flex: 1; min-width: 130px; }
+.quality-label { font-size: 11px; color: #8892b0; text-transform: uppercase; letter-spacing: 1px; }
+.quality-value { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.q-high { color: #3fb950; }
+.q-medium { color: #d29922; }
+.q-low { color: #f85149; }
+.factor-item { background: #1e2235; border-left: 3px solid #3d4166; padding: 8px 14px; border-radius: 0 6px 6px 0; margin-bottom: 6px; font-size: 14px; color: #c9d1d9; }
+.snippet-box { background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px; color: #8892b0; line-height: 1.5; }
+.source-chip { display: inline-block; background: #21262d; border: 1px solid #30363d; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #8892b0; margin: 2px; }
 </style>
 """, unsafe_allow_html=True)
-if "search_history" not in st.session_state:
-    st.session_state.search_history = []
-if "last_report" not in st.session_state:
-    st.session_state.last_report = None
-_DEFAULT_URL = os.environ.get("API_URL", "http://localhost:8080")
 EXAMPLE_QUERIES = [
     "Should I use XGBoost or Random Forest for tabular datasets?",
-    "Is PyTorch or TensorFlow better for production ML deployment?",
+    "Is PyTorch or TensorFlow better for production deployment?",
     "Should I use PostgreSQL or MongoDB for a high-write workload?",
-    "FastAPI or Flask for building a microservice API?",
+    "FastAPI vs Flask vs Django — which for microservices?",
+    "Should I use FAISS or Pinecone for vector search?",
 ]
-_COMPARATIVE_RE = re.compile(
-    r"\bor\b|\bvs\.?\b|\bversus\b|\bcompare\b|\bbetter\b|\bbest\b|\bover\b|\bprefer\b",
-    re.I,
-)
-def has_comparative_intent(query: str) -> bool:
-    return bool(_COMPARATIVE_RE.search(query))
-def api_call(method: str, path: str, **kwargs) -> dict | None:
+def check_api() -> bool:
     try:
-        url = st.session_state.get("api_url", _DEFAULT_URL).rstrip("/") + path
-        resp = getattr(requests, method)(url, **kwargs)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.ConnectionError:
-        st.error("Cannot reach the API. Make sure the backend is running.")
-    except requests.HTTPError as e:
-        st.error(f"API returned an error: {e.response.status_code}")
-    except requests.Timeout:
-        st.error("Request timed out. The pipeline may still be processing — try again.")
-    except Exception as exc:
-        st.error(f"Unexpected error: {exc}")
-    return None
-def get_health() -> bool:
-    try:
-        r = requests.get(
-            st.session_state.get("api_url", _DEFAULT_URL).rstrip("/") + "/health",
-            timeout=3,
-        )
+        r = requests.get(f"{API_URL}/health", timeout=3)
         return r.status_code == 200
     except Exception:
         return False
-def derive_quality(report: dict) -> dict:
-    options = report.get("options", [])
-    avg_cred = (
-        sum(o.get("source_credibility", 0) for o in options) / len(options)
-        if options else 0
+def check_ready() -> bool:
+    try:
+        r = requests.get(f"{API_URL}/ready", timeout=3)
+        return r.status_code == 200
+    except Exception:
+        return False
+def call_decision(query: str, use_live: bool) -> dict:
+    r = requests.post(
+        f"{API_URL}/decision",
+        json={"query": query, "use_live_retrieval": use_live},
+        timeout=120,
     )
-    total_docs = sum(o.get("supporting_documents", 0) for o in options)
-    contradictions = report.get("contradiction_count", 0)
-    if avg_cred >= 0.75:
-        source_label, source_cls = "High", "badge-high"
-    elif avg_cred >= 0.55:
-        source_label, source_cls = "Medium", "badge-medium"
-    else:
-        source_label, source_cls = "Low", "badge-low"
-    if contradictions == 0:
-        consistency_label, consistency_cls = "Good", "badge-high"
-    elif contradictions <= 5:
-        consistency_label, consistency_cls = "Mixed", "badge-medium"
-    else:
-        consistency_label, consistency_cls = "Conflicting", "badge-low"
-    if total_docs >= 12:
-        coverage_label, coverage_cls = "Sufficient", "badge-high"
-    elif total_docs >= 5:
-        coverage_label, coverage_cls = "Moderate", "badge-medium"
-    else:
-        coverage_label, coverage_cls = "Limited", "badge-low"
-    return {
-        "source": (source_label, source_cls),
-        "consistency": (consistency_label, consistency_cls),
-        "coverage": (coverage_label, coverage_cls),
-        "avg_cred": avg_cred,
-        "total_docs": total_docs,
+    r.raise_for_status()
+    return r.json()
+def call_metrics() -> dict:
+    r = requests.get(f"{API_URL}/metrics", timeout=5)
+    r.raise_for_status()
+    return r.json()
+def has_comparison(query: str) -> bool:
+    return bool(re.search(r"\bor\b|\bvs\.?\b|\bversus\b", query, re.I))
+def render_verdict(report: dict) -> None:
+    rec = report.get("recommendation")
+    dtype = report.get("decision_type", "inconclusive")
+    conf = report.get("confidence", 0.0)
+    badge_map = {
+        "strong": '<span class="badge-strong">⚡ Strong Signal</span>',
+        "weak": '<span class="badge-weak">⚠ Weak Signal</span>',
+        "inconclusive": '<span class="badge-inconclusive">✕ Inconclusive</span>',
     }
-def badge_html(label: str, css_class: str) -> str:
-    return f'<span class="quality-badge {css_class}">{label}</span>'
-def render_sidebar():
+    badge = badge_map.get(dtype, badge_map["inconclusive"])
+    if dtype == "inconclusive" or not rec:
+        st.markdown(f"""
+<div class="verdict-card">
+<div class="verdict-title">Decision</div>
+<div class="verdict-value" style="color:#f85149;">No Clear Winner</div>
+{badge}
+<p style="color:#8892b0;margin-top:12px;font-size:14px;">Evidence is conflicting or insufficient to make a confident recommendation.</p>
+</div>
+""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+<div class="verdict-card">
+<div class="verdict-title">Recommended</div>
+<div class="verdict-value">{rec}</div>
+{badge}&nbsp;&nbsp;<span style="color:#8892b0;font-size:14px;">Confidence: <strong style="color:#e6edf3;">{conf:.0%}</strong></span>
+</div>
+""", unsafe_allow_html=True)
+def render_quality_panel(report: dict) -> None:
+    options = report.get("options", [])
+    contradictions = report.get("contradictions", 0)
+    total_docs = sum(o.get("supporting_docs", 0) for o in options)
+    avg_cred = (
+        sum(o.get("credibility", 0) for o in options) / len(options)
+        if options else 0.0
+    )
+    source_q = "High" if avg_cred >= 0.75 else ("Medium" if avg_cred >= 0.55 else "Low")
+    source_cls = "q-high" if source_q == "High" else ("q-medium" if source_q == "Medium" else "q-low")
+    consistency = "Conflicting" if contradictions > 3 else ("Fair" if contradictions > 0 else "Good")
+    cons_cls = "q-low" if consistency == "Conflicting" else ("q-medium" if consistency == "Fair" else "q-high")
+    coverage = "Sufficient" if total_docs >= 10 else ("Limited" if total_docs >= 4 else "Sparse")
+    cov_cls = "q-high" if coverage == "Sufficient" else ("q-medium" if coverage == "Limited" else "q-low")
+    st.markdown(f"""
+<div class="quality-row">
+  <div class="quality-item">
+    <div class="quality-label">Source Quality</div>
+    <div class="quality-value {source_cls}">{source_q}</div>
+  </div>
+  <div class="quality-item">
+    <div class="quality-label">Consistency</div>
+    <div class="quality-value {cons_cls}">{consistency}</div>
+  </div>
+  <div class="quality-item">
+    <div class="quality-label">Coverage</div>
+    <div class="quality-value {cov_cls}">{coverage} ({total_docs} docs)</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+def render_reasoning(report: dict) -> None:
+    reasoning = report.get("reasoning", "")
+    if reasoning:
+        st.markdown("**Analysis**")
+        st.markdown(f'<div style="color:#c9d1d9;font-size:14px;line-height:1.7;padding:12px 0;">{reasoning}</div>', unsafe_allow_html=True)
+def render_key_factors(report: dict) -> None:
+    factors = report.get("key_factors", [])
+    if not factors:
+        return
+    st.markdown("**Key Factors**")
+    for f in factors:
+        st.markdown(f'<div class="factor-item">→ {f}</div>', unsafe_allow_html=True)
+def render_contradiction_banner(report: dict) -> None:
+    n = report.get("contradictions", 0)
+    if n == 0:
+        return
+    if n > 3:
+        st.warning(f"⚠ Evidence inconsistency detected — {n} conflicting signals found")
+    else:
+        st.info(f"ℹ {n} minor evidence conflict(s) detected — confidence adjusted")
+def render_advanced(report: dict) -> None:
+    with st.expander("🔍 Detailed Evidence Analysis"):
+        options = report.get("options", [])
+        for opt in options:
+            st.markdown(f"**{opt['name']}**")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Evidence Score", f"{opt['evidence_score']:.3f}")
+            c2.metric("Reliability", f"{opt['reliability']:.3f}")
+            c3.metric("Credibility", f"{opt['credibility']:.3f}")
+            c4.metric("Docs", opt['supporting_docs'])
+            snippets = opt.get("top_snippets", [])
+            if snippets:
+                with st.expander(f"Evidence snippets ({len(snippets)})"):
+                    for s in snippets:
+                        st.markdown(f'<div class="snippet-box">{s}</div>', unsafe_allow_html=True)
+            st.markdown("---")
+        ss = report.get("sources_summary", {})
+        st.markdown("**Source Breakdown**")
+        cols = st.columns(5)
+        labels = ["Research Papers", "Documentation", "Blogs", "Forums", "Live API"]
+        keys = ["research_papers", "documentation", "blogs", "forums", "live_api"]
+        for col, label, key in zip(cols, labels, keys):
+            col.metric(label, ss.get(key, 0))
+        vr = report.get("validation_reason", "")
+        if vr:
+            st.markdown(f"**Confidence Validation:** {vr}")
+def render_debug(report: dict) -> None:
+    with st.expander("🛠 Developer Debug"):
+        st.json(report)
+def render_retrieval_info(report: dict) -> None:
+    live = report.get("live_retrieval_used", False)
+    live_n = report.get("live_docs_count", 0)
+    local_n = report.get("local_docs_count", 0)
+    filters = report.get("filters_applied", {})
+    cols = st.columns(3)
+    cols[0].metric("Local Docs", local_n)
+    cols[1].metric("Live Docs", live_n, delta="Live" if live else None)
+    cols[2].metric("Latency", f"{report.get('latency_ms', 0):.0f}ms")
+    if filters:
+        active = {k: v for k, v in filters.items() if v is not None}
+        if active:
+            chips = " ".join(f'<span class="source-chip">{k}: {v}</span>' for k, v in active.items())
+            st.markdown(f"**Filters applied:** {chips}", unsafe_allow_html=True)
+def sidebar() -> tuple[bool, str, int, int, bool]:
     with st.sidebar:
         st.markdown("## ⚡ Evidentia")
-        st.caption("RAG Decision Intelligence Engine")
-        st.divider()
-        api_url = st.text_input(
-            "API endpoint",
-            value=_DEFAULT_URL,
-            label_visibility="collapsed",
-            placeholder="http://localhost:8080",
-        )
-        st.session_state["api_url"] = api_url
-        is_online = get_health()
-        if is_online:
-            st.success("API Online", icon="🟢")
+        st.markdown('<p style="color:#8892b0;font-size:13px;">AI Tech Decision Assistant</p>', unsafe_allow_html=True)
+        api_ok = check_api()
+        ready = check_ready() if api_ok else False
+        if api_ok and ready:
+            st.success("API Ready")
+        elif api_ok:
+            st.warning("API Loading...")
         else:
-            st.error("API Offline", icon="🔴")
-        st.divider()
-        st.markdown("##### Search History")
-        history = st.session_state.search_history
-        if not history:
-            st.caption("Your queries will appear here.")
-        else:
-            if st.button("Clear", use_container_width=True, type="secondary"):
-                st.session_state.search_history = []
-                st.rerun()
-            for i, entry in enumerate(reversed(history[-10:])):
-                rec = entry.get("recommendation") or "Inconclusive"
-                icon = "🟢" if entry.get("recommendation") else "🟡"
-                conf = round(entry.get("confidence", 0) * 100, 1)
-                with st.expander(f"{icon} {entry['query'][:36]}…", expanded=False):
-                    st.caption(f"**{rec}** · {conf}% · {entry['ts']}")
-                    if st.button("Re-run", key=f"rerun_{i}_{entry['ts']}", use_container_width=True):
-                        st.session_state["prefill_query"] = entry["query"]
-                        st.rerun()
-        st.divider()
-        with st.expander("About this system"):
-            st.markdown(
-                "**Evidentia** retrieves evidence from your knowledge base, "
-                "scores reliability with XGBoost, detects contradictions via NLI, "
-                "applies a decision policy engine, and generates a structured recommendation."
-            )
-            st.markdown("**Stack:** FAISS · BM25 · CrossEncoder · XGBoost · Ollama")
-def render_query_panel() -> tuple[str, bool, bool]:
-    col_title, col_status = st.columns([6, 1])
-    with col_title:
-        st.markdown("## Ask a Decision Question")
-    with col_status:
-        st.markdown("")
-    st.markdown(
-        "<p style='color:#888; margin-top:-12px;'>Compare two options — the engine finds evidence, scores it, and gives you a clear recommendation.</p>",
-        unsafe_allow_html=True,
-    )
-    with st.expander("Examples"):
+            st.error("API Offline")
+        st.markdown("---")
+        st.markdown("### Filters")
+        source_options = {"All Sources": None, "Research Papers": "research_paper", "Documentation": "documentation"}
+        source_label = st.selectbox("Source Type", list(source_options.keys()))
+        source_type = source_options[source_label]
+        year_range = st.slider("Publication Year", 2000, 2026, (2018, 2026))
+        only_cited = st.toggle("Only cited sources")
+        st.markdown("---")
+        st.markdown("### Options")
+        use_live = st.toggle("Use Live Research Data", value=False)
+        st.markdown("---")
+        if "history" not in st.session_state:
+            st.session_state.history = []
+        if st.session_state.history:
+            st.markdown("### History")
+            for i, item in enumerate(reversed(st.session_state.history[-8:])):
+                q = item["query"]
+                label = q[:35] + "..." if len(q) > 35 else q
+                if st.button(label, key=f"hist_{i}", use_container_width=True):
+                    st.session_state.selected_query = q
+        st.markdown("---")
+        st.markdown('<p style="color:#444;font-size:11px;text-align:center;">Evidentia v2.0</p>', unsafe_allow_html=True)
+    return use_live, source_type, year_range[0], year_range[1], only_cited
+def build_filter_query(base_query: str, source_type: str | None, min_year: int, max_year: int, only_cited: bool) -> str:
+    parts = [base_query]
+    if source_type == "research_paper":
+        parts.append("research papers")
+    elif source_type == "documentation":
+        parts.append("documentation")
+    if min_year > 2000:
+        parts.append(f"after {min_year}")
+    if max_year < 2026:
+        parts.append(f"before {max_year}")
+    if only_cited:
+        parts.append("with citations")
+    return " ".join(parts)
+def main() -> None:
+    use_live, source_type, min_year, max_year, only_cited = sidebar()
+    st.markdown("## Tech Decision Engine")
+    st.markdown('<p style="color:#8892b0;">Ask a comparative technology question. The engine retrieves evidence, scores reliability, detects contradictions, and generates a structured recommendation.</p>', unsafe_allow_html=True)
+    with st.expander("Example queries"):
         cols = st.columns(2)
-        for idx, q in enumerate(EXAMPLE_QUERIES):
-            if cols[idx % 2].button(q, key=f"eg_{idx}", use_container_width=True):
-                st.session_state["prefill_query"] = q
-                st.rerun()
+        for i, q in enumerate(EXAMPLE_QUERIES):
+            if cols[i % 2].button(q, key=f"ex_{i}", use_container_width=True):
+                st.session_state.selected_query = q
+    default_q = st.session_state.pop("selected_query", "")
     query = st.text_area(
-        "Your question",
-        value=st.session_state.pop("prefill_query", st.session_state.get("prefill_query", "")),
-        height=90,
-        placeholder="e.g. Should I use XGBoost or Random Forest for tabular datasets?",
-        label_visibility="collapsed",
+        "Enter your decision query",
+        value=default_q,
+        height=80,
+        placeholder="e.g. Should I use XGBoost or Random Forest for tabular data?",
     )
-    if query.strip() and not has_comparative_intent(query):
-        st.info(
-            "💡 This system works best for comparison queries — try phrasing as **X vs Y** or **X or Y**.",
-            icon="💡",
-        )
-    with st.expander("⚙️ Retrieval Settings", expanded=False):
-        fc1, fc2, fc3 = st.columns([2, 2, 2])
-        with fc1:
-            source_type = st.selectbox(
-                "Source type",
-                ["All sources", "Research papers", "Documentation", "Blog posts"],
-            )
-        with fc2:
-            min_year = st.slider("Published after", 2015, 2026, 2018)
-        with fc3:
-            st.markdown("")
-            st.markdown("")
-            cited_only = st.toggle("Cited sources only", value=False)
-        use_live = st.toggle(
-            "Fetch live research (arXiv + Semantic Scholar)",
-            value=False,
-            help="Queries external APIs for fresh papers. Adds ~10–30s latency.",
-        )
-        if use_live:
-            st.caption("Live retrieval fetches up to 10 papers from arXiv and Semantic Scholar in real time.")
-    filter_suffix_parts = []
-    if source_type != "All sources":
-        label_map = {
-            "Research papers": "research papers",
-            "Documentation": "documentation",
-            "Blog posts": "blog posts",
-        }
-        filter_suffix_parts.append(f"only {label_map[source_type]}")
-    if min_year > 2015:
-        filter_suffix_parts.append(f"after {min_year}")
-    if cited_only:
-        filter_suffix_parts.append("with citations")
-    augmented_query = query.strip()
-    if filter_suffix_parts and augmented_query:
-        augmented_query = f"{augmented_query}. Use {', '.join(filter_suffix_parts)}."
-    run = st.button("Analyse →", type="primary", use_container_width=True)
-    return augmented_query, run, use_live
-def render_verdict(report: dict):
-    recommended = report.get("recommended_option")
-    confidence = report.get("recommendation_confidence", 0.0)
-    conf_pct = round(confidence * 100, 1)
-    reasoning = report.get("reasoning", "")
-    short_reasoning = ". ".join(reasoning.split(". ")[:3]).strip()
-    if not short_reasoning.endswith("."):
-        short_reasoning += "."
-    if recommended:
-        st.markdown(
-            f'<div class="decision-card">'
-            f'<div class="section-label">Recommendation</div>'
-            f'<div class="verdict-win">{recommended}</div>'
-            f'<div style="color:#aaa; font-size:1rem; margin-top:6px;">Confidence: <strong style="color:#00d4aa">{conf_pct}%</strong></div>'
-            f'<hr style="border-color:#0f3460; margin: 14px 0;">'
-            f'<div style="color:#ccc; font-size:0.95rem; line-height:1.6">{short_reasoning}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        policy_reason = report.get("policy_reason", "Evidence is conflicting or insufficient.")
-        st.markdown(
-            f'<div class="decision-card">'
-            f'<div class="section-label">Result</div>'
-            f'<div class="verdict-inconclusive">No clear recommendation</div>'
-            f'<div style="color:#aaa; font-size:0.95rem; margin-top:10px; line-height:1.6">{policy_reason}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-def render_status_panel(report: dict):
-    q = derive_quality(report)
-    live_used = report.get("live_retrieval_used", False)
-    live_count = report.get("live_docs_count", 0)
-    local_count = report.get("local_docs_count", 0)
-    active_filters = {k: v for k, v in report.get("filters_applied", {}).items() if v is not None}
-    st.markdown("##### Evidence Quality")
-    badge_col1, badge_col2, badge_col3 = st.columns(3)
-    with badge_col1:
-        st.markdown(f"**Source Quality**")
-        st.markdown(badge_html(*q["source"]), unsafe_allow_html=True)
-    with badge_col2:
-        st.markdown(f"**Consistency**")
-        st.markdown(badge_html(*q["consistency"]), unsafe_allow_html=True)
-    with badge_col3:
-        st.markdown(f"**Coverage**")
-        st.markdown(badge_html(*q["coverage"]), unsafe_allow_html=True)
-    st.markdown("")
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("Total Evidence", q["total_docs"])
-    mc2.metric("Local Docs", local_count)
-    mc3.metric("Live Docs", live_count, delta="arXiv · S2" if live_count else None)
-    mc4.metric("Filters", len(active_filters))
-    if active_filters:
-        filter_text = " · ".join(f"{k}: {v}" for k, v in active_filters.items())
-        st.caption(f"Active filters: {filter_text}")
-    if report.get("reflection_flag"):
-        st.warning(
-            f"**Quality Warning** — {report.get('reflection_reason', '')}",
-            icon="⚠️",
-        )
-def render_contradiction_banner(report: dict):
-    n = report.get("contradiction_count", 0)
-    detected = report.get("contradiction_detected", False)
-    if not detected:
-        st.success("Evidence is internally consistent — no contradictions found.", icon="✅")
-        return
-    st.warning(
-        f"**Evidence inconsistency detected** — {n} conflicting signal{'s' if n != 1 else ''} found in retrieved documents.",
-        icon="⚠️",
-    )
-    if report.get("contradiction_details"):
-        with st.expander("View conflicting evidence"):
-            for pair in report["contradiction_details"][:3]:
-                col_a, col_b = st.columns(2)
-                col_a.caption("Signal A")
-                col_a.info(pair.get("snippet_a", "")[:200])
-                col_b.caption("Signal B")
-                col_b.error(pair.get("snippet_b", "")[:200])
-                st.caption(f"Conflict score: {pair.get('score', 0):.2f}")
-                st.divider()
-def render_advanced_section(report: dict):
-    with st.expander("🔍 Detailed Analysis"):
-        recommended = report.get("recommended_option")
-        st.markdown("##### Evidence by Option")
-        for opt in report.get("options", []):
-            is_winner = opt["option"] == recommended
-            label = f"{'✅ ' if is_winner else ''}{opt['option']}"
-            with st.expander(label, expanded=is_winner):
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Docs", opt["supporting_documents"])
-                c2.metric("Reliability", f"{opt['reliability_score']:.2f}")
-                c3.metric("Credibility", f"{opt['source_credibility']:.2f}")
-                c4.metric("Evidence Score", f"{opt['final_evidence_score']:.2f}")
-                snippets = opt.get("top_evidence_snippets", [])[:3]
-                if snippets:
-                    st.markdown("**Supporting evidence:**")
-                    for snippet in snippets:
-                        st.markdown(f"> {snippet[:250]}")
-        if report.get("policy_reason"):
-            st.markdown("---")
-            st.markdown("##### Policy Decision")
-            st.info(report["policy_reason"])
-        if report.get("reflection_flag"):
-            st.markdown("---")
-            st.markdown("##### Reflection Agent")
-            st.warning(report.get("reflection_reason", ""))
-def render_debug_section(report: dict):
-    with st.expander("🛠 Developer Debug"):
-        st.caption("Raw pipeline output — for engineering review only.")
-        dc1, dc2 = st.columns(2)
-        with dc1:
-            st.markdown("**Scores**")
-            for opt in report.get("options", []):
-                st.code(
-                    f"{opt['option'][:40]}\n"
-                    f"  final:       {opt['final_evidence_score']:.4f}\n"
-                    f"  reliability: {opt['reliability_score']:.4f}\n"
-                    f"  credibility: {opt['source_credibility']:.4f}\n"
-                    f"  similarity:  {opt['avg_similarity']:.4f}\n"
-                    f"  docs:        {opt['supporting_documents']}",
-                    language="yaml",
-                )
-        with dc2:
-            st.markdown("**Pipeline Metadata**")
-            st.code(
-                f"latency_ms:       {report.get('latency_ms')}\n"
-                f"model_used:       {report.get('model_used')}\n"
-                f"live_retrieval:   {report.get('live_retrieval_used')}\n"
-                f"live_docs:        {report.get('live_docs_count')}\n"
-                f"local_docs:       {report.get('local_docs_count')}\n"
-                f"contradictions:   {report.get('contradiction_count')}\n"
-                f"reflection_flag:  {report.get('reflection_flag')}",
-                language="yaml",
-            )
-        st.markdown("**Full JSON**")
-        st.json(report)
-def render_ingest_tab():
-    st.markdown("## Add to Knowledge Base")
-    st.markdown("<p style='color:#888;'>Documents ingested here become evidence for future queries.</p>", unsafe_allow_html=True)
-    mode = st.radio("Input mode", ["Paste text", "File paths"], horizontal=True)
-    if mode == "Paste text":
-        text = st.text_area(
-            "Document content",
-            height=220,
-            placeholder="Paste any text — research papers, docs, articles…",
-            label_visibility="collapsed",
-        )
-        if st.button("Ingest →", type="primary") and text.strip():
-            with st.spinner("Processing…"):
-                result = api_call("post", "/ingest_documents", json={"texts": [text.strip()]}, timeout=60)
-            if result:
-                st.success(
-                    f"Added {result.get('ingested_documents', 0)} document · "
-                    f"{result.get('ingested_chunks', 0)} chunks indexed."
-                )
-    else:
-        paths_input = st.text_area(
-            "File paths",
-            height=140,
-            placeholder="/path/to/paper.pdf\n/path/to/notes.txt",
-            label_visibility="collapsed",
-        )
-        if st.button("Ingest Files →", type="primary") and paths_input.strip():
-            paths = [p.strip() for p in paths_input.splitlines() if p.strip()]
-            with st.spinner(f"Processing {len(paths)} file(s)…"):
-                result = api_call("post", "/ingest_documents", json={"file_paths": paths}, timeout=120)
-            if result:
-                st.success(f"Ingested {result.get('ingested_documents', 0)} document(s).")
-def render_metrics_tab():
-    st.markdown("## System Metrics")
-    if st.button("Refresh", type="secondary"):
-        st.rerun()
-    m = api_call("get", "/metrics", timeout=5)
-    if not m:
-        st.warning("Could not reach the API metrics endpoint.")
-        return
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Requests", m.get("request_count", 0))
-    c2.metric("Decisions", m.get("decision_count", 0))
-    c3.metric("Docs Ingested", m.get("ingest_count", 0))
-    c4.metric("Errors", m.get("error_count", 0))
-    c5.metric("Avg Latency", f"{m.get('avg_latency_ms', 0)} ms")
-render_sidebar()
-tab_decision, tab_ingest, tab_metrics = st.tabs(["Decision Analysis", "Knowledge Base", "Metrics"])
-with tab_decision:
-    augmented_query, run_clicked, use_live = render_query_panel()
-    if run_clicked:
-        if not augmented_query:
-            st.warning("Please enter a question before running.")
-        else:
-            spinner_text = "Fetching live research + analysing evidence…" if use_live else "Analysing evidence…"
-            with st.spinner(spinner_text):
-                t0 = time.perf_counter()
-                report = api_call(
-                    "post",
-                    "/decision",
-                    json={"query": augmented_query, "use_live_retrieval": use_live},
-                    timeout=180,
-                )
-                elapsed_ms = round((time.perf_counter() - t0) * 1000)
-            if report:
-                total_docs = sum(o.get("supporting_documents", 0) for o in report.get("options", []))
-                if total_docs == 0:
-                    st.error("No relevant evidence found — try rephrasing your query or ingesting more documents.")
+    run_col, _ = st.columns([1, 3])
+    run = run_col.button("🚀 Analyse", type="primary", use_container_width=True)
+    if run:
+        if not query.strip():
+            st.warning("Please enter a query.")
+            return
+        if not has_comparison(query):
+            st.warning("💡 This engine works best for comparison queries — try adding 'vs', 'or', or 'versus' between two options.")
+        if not check_api():
+            st.error("Cannot reach API. Make sure the backend is running.")
+            return
+        if not check_ready():
+            st.info("Models are still loading. Please wait a moment and try again.")
+            return
+        full_query = build_filter_query(query, source_type, min_year, max_year, only_cited)
+        with st.spinner("Analysing evidence..."):
+            try:
+                report = call_decision(full_query, use_live)
+                st.session_state.last_report = report
+                st.session_state.history.append({"query": query, "result": report})
+            except requests.exceptions.ConnectionError:
+                st.error("Connection refused — is the API running?")
+                return
+            except requests.exceptions.Timeout:
+                st.error("Request timed out. The pipeline may be overloaded.")
+                return
+            except Exception as e:
+                err = str(e)
+                if "No relevant" in err or "0 documents" in err:
+                    st.warning("No relevant evidence found — try rephrasing your query or disabling filters.")
                 else:
-                    st.session_state.last_report = report
-                    st.session_state.search_history.append({
-                        "query": augmented_query,
-                        "recommendation": report.get("recommended_option"),
-                        "confidence": report.get("recommendation_confidence", 0.0),
-                        "ts": time.strftime("%H:%M:%S"),
-                    })
-                    st.caption(f"Completed in {elapsed_ms:,} ms")
-                    render_verdict(report)
-                    st.markdown("---")
-                    render_status_panel(report)
-                    st.markdown("---")
-                    render_contradiction_banner(report)
-                    st.markdown("---")
-                    render_advanced_section(report)
-                    render_debug_section(report)
-    elif st.session_state.last_report:
-        report = st.session_state.last_report
-        st.caption("Showing last result — run a new query above.")
-        render_verdict(report)
+                    st.error(f"Pipeline error: {err}")
+                return
+    report = st.session_state.get("last_report")
+    if not report:
         st.markdown("---")
-        render_status_panel(report)
-        st.markdown("---")
-        render_contradiction_banner(report)
-        st.markdown("---")
-        render_advanced_section(report)
-        render_debug_section(report)
-with tab_ingest:
-    render_ingest_tab()
-with tab_metrics:
-    render_metrics_tab()
+        st.markdown('<p style="color:#8892b0;text-align:center;">Enter a query above to get started.</p>', unsafe_allow_html=True)
+        return
+    st.markdown("---")
+    render_verdict(report)
+    render_quality_panel(report)
+    st.markdown("")
+    render_reasoning(report)
+    render_key_factors(report)
+    render_contradiction_banner(report)
+    st.markdown("")
+    render_retrieval_info(report)
+    render_advanced(report)
+    render_debug(report)
+if __name__ == "__main__":
+    main()
