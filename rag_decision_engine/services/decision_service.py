@@ -10,8 +10,14 @@ from rag_decision_engine.retrieval.reranker import CrossEncoderReranker
 from rag_decision_engine.services.confidence_validator import ConfidenceValidator
 from rag_decision_engine.services.contradiction_service import ContradictionDetector
 from rag_decision_engine.services.decision_engine import DecisionEngine
+from rag_decision_engine.services.evidence_service import (
+    OptionEvidence,
+    format_evidence_for_prompt,
+    select_top_evidence_batch,
+)
 from rag_decision_engine.services.live_retrieval import detect_query_type, fetch_live_documents_sync
-from rag_decision_engine.services.query_filter_parser import extract_filters
+from rag_decision_engine.services.query_filter_parser import QueryFilters, extract_filters
+from rag_decision_engine.services.query_normalizer import normalize_query
 from rag_decision_engine.services.reliability_service import ReliabilityService, ScoredEvidence
 logger = get_logger(__name__)
 _QUERY_CACHE: dict[str, "DecisionReport"] = {}
@@ -38,6 +44,7 @@ class DecisionReport(BaseModel):
     key_factors: list[str] = Field(default_factory=list)
     contradictions: int
     sources_summary: SourcesSummary
+    evidence: list[OptionEvidence] = Field(default_factory=list)
     reasoning: str
     latency_ms: float
     live_retrieval_used: bool = False
@@ -94,20 +101,31 @@ class DecisionService:
         self._validator = ConfidenceValidator()
         self._llm = self._build_llm()
     def decide(self, query: str, use_live_retrieval: bool = False) -> DecisionReport:
-        cache_key = f"{query}|{use_live_retrieval}"
+        query = normalize_query(query)
+        is_research = detect_query_type(query)
+        effective_live = use_live_retrieval or is_research
+        cache_key = f"{query}|{effective_live}"
         if cache_key in _QUERY_CACHE:
             logger.info("cache_hit", query=query[:60])
             return _QUERY_CACHE[cache_key]
         t_start = time.perf_counter()
-        logger.info("decision_start", query=query[:120])
+        logger.info("decision_start", query=query[:120], live_retrieval=effective_live, is_research=is_research)
         filters = extract_filters(query)
+        if is_research and filters.source_type is None:
+            filters = QueryFilters(
+                source_type="research_paper",
+                min_year=filters.min_year or 2018,
+                max_year=filters.max_year,
+                has_citations=filters.has_citations,
+            )
         options = _parse_options(query)
         live_docs = []
-        if use_live_retrieval and detect_query_type(query):
+        if effective_live:
             live_docs = fetch_live_documents_sync(query)
             logger.info("live_docs_fetched", count=len(live_docs))
         option_results: list[OptionResult] = []
         all_scored: list[ScoredEvidence] = []
+        option_docs_map: dict[str, list[ScoredEvidence]] = {}
         for option in options:
             option_query = f"{query} {option}"
             raw_docs = self._retriever.search(
@@ -118,7 +136,15 @@ class DecisionService:
             reranked = self._reranker.rerank(option_query, raw_docs)
             scored = self._reliability.score_evidence(reranked)
             all_scored.extend(scored)
+            option_docs_map[option] = scored
             option_results.append(_summarise_option(option, scored))
+        cross_encoder_model = self._reranker._get_model() if self._reranker else None
+        option_evidence = select_top_evidence_batch(
+            option_docs_map=option_docs_map,
+            query=query,
+            top_k=3,
+            model=cross_encoder_model,
+        )
         contradiction_report = self._contradiction.detect(all_scored)
         total_score = sum(r.evidence_score for r in option_results)
         best_score = max((r.evidence_score for r in option_results), default=0.0)
@@ -135,6 +161,7 @@ class DecisionService:
         reasoning = self._generate_reasoning(
             query=query,
             options=option_results,
+            option_evidence=option_evidence,
             recommendation=engine_result.recommendation,
             decision_type=engine_result.decision_type,
             contradiction_count=contradiction_report.pair_count,
@@ -148,9 +175,10 @@ class DecisionService:
             key_factors=engine_result.key_factors,
             contradictions=contradiction_report.pair_count,
             sources_summary=_build_sources_summary(all_scored, len(live_docs)),
+            evidence=option_evidence,
             reasoning=reasoning,
             latency_ms=round((time.perf_counter() - t_start) * 1000, 1),
-            live_retrieval_used=bool(live_docs),
+            live_retrieval_used=effective_live and bool(live_docs),
             live_docs_count=len(live_docs),
             local_docs_count=max(0, len(all_scored) - len(live_docs)),
             filters_applied=filters.to_dict() if not filters.is_empty() else {},
@@ -172,35 +200,39 @@ class DecisionService:
         self,
         query: str,
         options: list[OptionResult],
+        option_evidence: list[OptionEvidence],
         recommendation: Optional[str],
         decision_type: str,
         contradiction_count: int,
     ) -> str:
         if self._llm is None:
-            return self._fallback_reasoning(options, recommendation, decision_type, contradiction_count)
-        options_text = "\n".join(
-            f"- {o.name}: score={o.evidence_score}, reliability={o.reliability}, docs={o.supporting_docs}"
-            for o in options
-        )
+            return self._fallback_reasoning(options, option_evidence, recommendation, decision_type, contradiction_count)
+        evidence_block = format_evidence_for_prompt(option_evidence)
         prompt = PromptTemplate(
-            input_variables=["query", "options", "recommendation", "decision_type", "contradictions"],
-            template="""You are an expert tech decision analyst. Provide concise 3-sentence evidence-based reasoning.
+            input_variables=["query", "evidence_block", "recommendation", "decision_type", "contradictions"],
+            template="""You are an expert tech decision analyst.
+
+STRICT INSTRUCTIONS:
+- Base your reasoning ONLY on the evidence quotes provided below.
+- Reference the quotes explicitly in your response.
+- Do NOT introduce external knowledge or assumptions.
+- Keep reasoning to 3-5 sentences.
 
 Query: {query}
 
 Evidence:
-{options}
+{evidence_block}
 
 Decision: {recommendation} ({decision_type})
-Contradictions: {contradictions}
+Contradictions detected: {contradictions}
 
-Reasoning:""",
+Reasoning (cite the evidence explicitly):""",
         )
         chain = prompt | self._llm
         try:
             result = chain.invoke({
                 "query": query,
-                "options": options_text,
+                "evidence_block": evidence_block,
                 "recommendation": recommendation or "Inconclusive",
                 "decision_type": decision_type,
                 "contradictions": contradiction_count,
@@ -208,10 +240,11 @@ Reasoning:""",
             return result.strip() if isinstance(result, str) else str(result).strip()
         except Exception as exc:
             logger.warning("llm_reasoning_failed", error=str(exc))
-            return self._fallback_reasoning(options, recommendation, decision_type, contradiction_count)
+            return self._fallback_reasoning(options, option_evidence, recommendation, decision_type, contradiction_count)
     @staticmethod
     def _fallback_reasoning(
         options: list[OptionResult],
+        option_evidence: list[OptionEvidence],
         recommendation: Optional[str],
         decision_type: str,
         contradiction_count: int,
@@ -222,14 +255,21 @@ Reasoning:""",
                 + (f"{contradiction_count} contradicting signals detected. " if contradiction_count else "")
                 + "Consider gathering more targeted evidence before deciding."
             )
-        best = next((o for o in options if o.name == recommendation), None)
-        if not best:
+        best_opt = next((o for o in options if o.name == recommendation), None)
+        best_ev = next((oe for oe in option_evidence if oe.option == recommendation), None)
+        if not best_opt:
             return "Recommendation based on aggregate evidence scores."
         lines = [
-            f"Based on {best.supporting_docs} supporting documents, '{best.name}' achieves "
-            f"the highest evidence score ({best.evidence_score:.2f}) with reliability {best.reliability:.2f} "
-            f"and source credibility {best.credibility:.2f}."
+            f"Based on {best_opt.supporting_docs} supporting documents, '{best_opt.name}' achieves "
+            f"the highest evidence score ({best_opt.evidence_score:.2f}) with reliability {best_opt.reliability:.2f} "
+            f"and source credibility {best_opt.credibility:.2f}."
         ]
+        if best_ev and best_ev.items:
+            top = best_ev.items[0]
+            lines.append(
+                f'Key evidence: "{top.quote}" '
+                f"({top.source_type}, {top.year or 'n/a'}, score {top.score:.2f})."
+            )
         if contradiction_count:
             lines.append(f"{contradiction_count} contradicting evidence pair(s) detected — confidence adjusted.")
         if decision_type == "weak":

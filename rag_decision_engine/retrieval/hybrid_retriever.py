@@ -5,9 +5,12 @@ from rag_decision_engine.config.logging_config import get_logger
 from rag_decision_engine.retrieval.bm25_retriever import BM25Retriever
 from rag_decision_engine.retrieval.metadata_filter import apply_metadata_filter
 from rag_decision_engine.retrieval.vector_retriever import RetrievedDocument, VectorRetriever
+from rag_decision_engine.services.live_retrieval import detect_query_type
 from rag_decision_engine.services.query_filter_parser import QueryFilters
 logger = get_logger(__name__)
 _RRF_K = 60
+_RESEARCH_VECTOR_WEIGHT = 0.8
+_RESEARCH_BM25_WEIGHT = 0.2
 class HybridRetriever:
     def __init__(self, vector_weight: float | None = None) -> None:
         self._vector = VectorRetriever()
@@ -45,12 +48,20 @@ class HybridRetriever:
     ) -> list[RetrievedDocument]:
         k = top_k or settings.rerank_top_k
         c_k = candidate_k or settings.retrieval_top_k
+        if detect_query_type(query):
+            v_weight = _RESEARCH_VECTOR_WEIGHT
+            b_weight = _RESEARCH_BM25_WEIGHT
+        else:
+            v_weight = self._vector_weight
+            b_weight = self._bm25_weight
         t0 = time.perf_counter()
         vector_results = self._vector.search(query, top_k=c_k)
         bm25_results = self._bm25.search(query, top_k=c_k)
-        fused = self._rrf(vector_results, bm25_results, dynamic_docs or [], top_k=k)
+        fused = self._rrf(vector_results, bm25_results, dynamic_docs or [], top_k=k, vector_weight=v_weight, bm25_weight=b_weight)
         if filters and not filters.is_empty():
             fused = apply_metadata_filter(fused, filters)
+        if dynamic_docs:
+            logger.info("dynamic_docs_merged", count=len(dynamic_docs))
         logger.info(
             "hybrid_search",
             query_preview=query[:60],
@@ -58,6 +69,8 @@ class HybridRetriever:
             bm25_hits=len(bm25_results),
             dynamic_docs=len(dynamic_docs or []),
             fused=len(fused),
+            vector_weight=v_weight,
+            bm25_weight=b_weight,
             elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
         )
         return fused
@@ -67,14 +80,18 @@ class HybridRetriever:
         bm25_results: list[RetrievedDocument],
         dynamic_docs: list[RetrievedDocument],
         top_k: int,
+        vector_weight: float | None = None,
+        bm25_weight: float | None = None,
     ) -> list[RetrievedDocument]:
+        vw = vector_weight if vector_weight is not None else self._vector_weight
+        bw = bm25_weight if bm25_weight is not None else self._bm25_weight
         scores: dict[str, float] = defaultdict(float)
         doc_map: dict[str, RetrievedDocument] = {}
         for rank, doc in enumerate(vector_results, start=1):
-            scores[doc.chunk_id] += self._vector_weight / (_RRF_K + rank)
+            scores[doc.chunk_id] += vw / (_RRF_K + rank)
             doc_map[doc.chunk_id] = doc
         for rank, doc in enumerate(bm25_results, start=1):
-            scores[doc.chunk_id] += self._bm25_weight / (_RRF_K + rank)
+            scores[doc.chunk_id] += bw / (_RRF_K + rank)
             if doc.chunk_id not in doc_map:
                 doc_map[doc.chunk_id] = doc
         for rank, doc in enumerate(dynamic_docs, start=1):

@@ -1,7 +1,5 @@
 import os
 import re
-import time
-from typing import Any
 import requests
 import streamlit as st
 API_URL = os.environ.get("API_URL", "http://localhost:8080")
@@ -149,6 +147,41 @@ def render_contradiction_banner(report: dict) -> None:
         st.warning(f"⚠ Evidence inconsistency detected — {n} conflicting signals found")
     else:
         st.info(f"ℹ {n} minor evidence conflict(s) detected — confidence adjusted")
+def render_evidence_attribution(report: dict) -> None:
+    evidence_list = report.get("evidence", [])
+    if not evidence_list:
+        return
+    st.markdown("**Evidence Attribution**")
+    for oe in evidence_list:
+        option_name = oe.get("option", "")
+        items = oe.get("items", [])
+        if not items:
+            continue
+        with st.expander(f"Evidence for: {option_name} ({len(items)} quotes)"):
+            for item in items:
+                quote = item.get("quote", "")
+                source_type = item.get("source_type", "unknown")
+                year = item.get("year")
+                score = item.get("score", 0.0)
+                origin = item.get("source_origin", "local")
+                citations = item.get("citations", 0)
+                year_str = str(year) if year else "n/a"
+                origin_badge = "🌐 live" if origin == "api" else "💾 local"
+                cit_badge = f'<span class="source-chip">Citations: {citations}</span>' if citations else ""
+                badge_html = (
+                    f'<span class="source-chip">{source_type}</span>'
+                    f'<span class="source-chip">{year_str}</span>'
+                    f'{cit_badge}'
+                    f'<span class="source-chip">score: {score:.2f}</span>'
+                    f'<span class="source-chip">{origin_badge}</span>'
+                )
+                st.markdown(
+                    f'<div class="snippet-box">'
+                    f'<div style="color:#c9d1d9;font-size:13px;line-height:1.6;border-left:3px solid #3d4166;padding-left:10px;margin-bottom:6px;">{quote}</div>'
+                    f'{badge_html}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 def render_advanced(report: dict) -> None:
     with st.expander("🔍 Detailed Evidence Analysis"):
         options = report.get("options", [])
@@ -183,6 +216,8 @@ def render_retrieval_info(report: dict) -> None:
     live_n = report.get("live_docs_count", 0)
     local_n = report.get("local_docs_count", 0)
     filters = report.get("filters_applied", {})
+    if live:
+        st.markdown('<p style="color:#3fb950;font-size:12px;">⚡ Research mode — live API retrieval active (arXiv + Semantic Scholar)</p>', unsafe_allow_html=True)
     cols = st.columns(3)
     cols[0].metric("Local Docs", local_n)
     cols[1].metric("Live Docs", live_n, delta="Live" if live else None)
@@ -214,6 +249,7 @@ def sidebar() -> tuple[bool, str, int, int, bool]:
         st.markdown("---")
         st.markdown("### Options")
         use_live = st.toggle("Use Live Research Data", value=False)
+        st.markdown('<p style="color:#8892b0;font-size:11px;">Research queries auto-enable live retrieval.</p>', unsafe_allow_html=True)
         st.markdown("---")
         if "history" not in st.session_state:
             st.session_state.history = []
@@ -302,6 +338,7 @@ def main() -> None:
     render_key_factors(report)
     render_contradiction_banner(report)
     st.markdown("")
+    render_evidence_attribution(report)
     render_retrieval_info(report)
     render_advanced(report)
     render_debug(report)

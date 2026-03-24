@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Literal
 from pydantic import Field
@@ -55,17 +54,23 @@ class Settings(BaseSettings):
     mlflow_experiment: str = "evidence-reliability"
     source_credibility_map: dict[str, float] = Field(
         default={
+            "semantic_scholar": 0.95,
+            "arxiv": 0.90,
             "research_paper": 0.95,
             "official_documentation": 0.90,
+            "documentation": 0.90,
             "technical_blog": 0.70,
+            "blog": 0.70,
             "news_article": 0.60,
             "forum": 0.40,
             "unknown": 0.50,
         }
     )
-    weight_similarity: float = 0.5
-    weight_reliability: float = 0.3
-    weight_credibility: float = 0.2
+    weight_similarity: float = 0.45
+    weight_reliability: float = 0.25
+    weight_credibility: float = 0.15
+    weight_citation: float = 0.10
+    weight_recency: float = 0.05
     raw_data_dir: Path = DATA_DIR / "raw"
     processed_data_dir: Path = DATA_DIR / "processed"
     logs_dir: Path = ROOT_DIR / "logs"

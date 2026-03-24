@@ -1,5 +1,4 @@
 import asyncio
-import re
 import xml.etree.ElementTree as ET
 from rag_decision_engine.config.logging_config import get_logger
 from rag_decision_engine.retrieval.vector_retriever import RetrievedDocument
@@ -8,19 +7,21 @@ _ARXIV_URL = "https://export.arxiv.org/api/query"
 _SEMANTIC_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 _TIMEOUT = 8.0
 _MAX_RESULTS = 5
-_ML_TERMS = re.compile(
-    r"\b(machine learning|deep learning|neural network|transformer|llm|gpt|bert|"
-    r"xgboost|random forest|faiss|embedding|retrieval|rag|nlp|"
-    r"classification|regression|clustering|reinforcement|attention|"
-    r"pytorch|tensorflow|scikit|model|algorithm|dataset|benchmark)\b",
-    re.I,
-)
-_RESEARCH_TERMS = re.compile(
-    r"\b(research|paper|study|survey|literature|publication|findings|experiment)\b",
-    re.I,
-)
+_RESEARCH_KEYWORDS = [
+    "research", "paper", "study", "survey", "literature", "publication",
+    "findings", "experiment",
+    "vs", "versus", "compare", "comparison",
+    "benchmark", "performance",
+    "evaluation", "analysis",
+    "machine learning", "deep learning", "neural network", "transformer",
+    "llm", "gpt", "bert", "xgboost", "random forest", "faiss", "embedding",
+    "retrieval", "rag", "nlp", "classification", "regression", "clustering",
+    "reinforcement", "attention", "pytorch", "tensorflow", "scikit",
+    "model", "algorithm", "dataset",
+]
 def detect_query_type(query: str) -> bool:
-    return bool(_ML_TERMS.search(query) or _RESEARCH_TERMS.search(query))
+    q = query.lower()
+    return any(k in q for k in _RESEARCH_KEYWORDS)
 async def fetch_arxiv(query: str, max_results: int = _MAX_RESULTS) -> list[RetrievedDocument]:
     try:
         import httpx
@@ -64,12 +65,13 @@ def _parse_arxiv(xml_text: str) -> list[RetrievedDocument]:
                 chunk_id=f"arxiv_{arxiv_id}",
                 doc_id=f"arxiv_{arxiv_id}",
                 text=text,
-                score=0.5,
+                score=0.55,
                 metadata={
                     "source_type": "research_paper",
                     "estimated_year": year,
                     "year": year,
                     "has_citations": True,
+                    "citation_count": 0,
                     "origin": "arxiv",
                     "title": title,
                 },
@@ -110,7 +112,7 @@ def _parse_semantic(data: dict) -> list[RetrievedDocument]:
                 chunk_id=f"ss_{paper_id}",
                 doc_id=f"ss_{paper_id}",
                 text=text,
-                score=0.5,
+                score=0.55,
                 metadata={
                     "source_type": "research_paper",
                     "estimated_year": year,
@@ -125,6 +127,7 @@ def _parse_semantic(data: dict) -> list[RetrievedDocument]:
         )
     return docs
 async def fetch_live_documents(query: str) -> list[RetrievedDocument]:
+    logger.info("live_retrieval_triggered", query=query[:120])
     results = await asyncio.gather(
         fetch_arxiv(query),
         fetch_semantic_scholar(query),
@@ -136,6 +139,7 @@ async def fetch_live_documents(query: str) -> list[RetrievedDocument]:
             docs.extend(r)
         elif isinstance(r, Exception):
             logger.warning("live_retrieval_partial_failure", error=str(r))
+    logger.info("api_docs_fetched", count=len(docs))
     logger.info("live_retrieval_complete", total_docs=len(docs))
     return docs
 def fetch_live_documents_sync(query: str) -> list[RetrievedDocument]:
