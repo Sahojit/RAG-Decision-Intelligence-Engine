@@ -108,7 +108,7 @@ decision_type: str                   # "strong" | "weak" | "inconclusive"
 confidence: float
 key_factors: list[str]
 contradictions: int
-sources_summary: SourcesSummary      # research_papers, documentation, blogs, forums, live_api
+sources_summary: SourcesSummary      
 reasoning: str
 latency_ms: float
 live_retrieval_used: bool
