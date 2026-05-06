@@ -17,6 +17,9 @@ class CrossEncoderReranker:
         k = top_k or settings.rerank_top_k
         if not documents:
             return []
+        if settings.disable_reranker:
+            logger.info("reranker_disabled", returning=min(k, len(documents)))
+            return documents[:k]
         model = self._get_model()
         t0 = time.perf_counter()
         import numpy as np

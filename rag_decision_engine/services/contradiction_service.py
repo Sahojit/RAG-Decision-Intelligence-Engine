@@ -35,6 +35,9 @@ class ContradictionDetector:
     def detect(self, evidence: list[ScoredEvidence]) -> ContradictionReport:
         if len(evidence) < 2:
             return ContradictionReport(detected=False, pairs=[], max_contradiction_score=0.0)
+        if settings.disable_contradiction:
+            logger.info("contradiction_disabled")
+            return ContradictionReport(detected=False, pairs=[], max_contradiction_score=0.0)
         t0 = time.perf_counter()
         pairs_to_check = list(itertools.combinations(evidence, 2))[: self._max_pairs]
         model = self._get_model()

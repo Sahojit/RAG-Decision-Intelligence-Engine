@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     bm25_weight: float = 0.4
     vector_weight: float = 0.6
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    disable_reranker: bool = False
+    disable_contradiction: bool = False
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3"
     llm_temperature: float = 0.1
