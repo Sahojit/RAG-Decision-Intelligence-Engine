@@ -2,28 +2,30 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 import faiss
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from rag_decision_engine.config import settings
 from rag_decision_engine.config.logging_config import get_logger
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+
 logger = get_logger(__name__)
 
-# Single SentenceTransformer instance shared across all VectorRetriever instances in the
-# process. DecisionService and IngestionPipeline both create a VectorRetriever; without
-# this singleton they each load the model separately, doubling peak RSS and causing OOM
-# on memory-constrained deployments.
-_EMBEDDING_MODEL: Optional[SentenceTransformer] = None
+# Singleton — loaded once on first encode call, never at import or __init__ time.
+# Keeping the import lazy (inside _get_embedding_model) means importing this module
+# does NOT pull in torch, which would cost ~150 MB and OOM the 512 MB free instance
+# before any request is ever handled.
+_EMBEDDING_MODEL: Optional["SentenceTransformer"] = None
 
-def _get_embedding_model() -> SentenceTransformer:
+
+def _get_embedding_model() -> "SentenceTransformer":
     global _EMBEDDING_MODEL
     if _EMBEDDING_MODEL is None:
+        from sentence_transformers import SentenceTransformer  # lazy — defers torch import
         logger.info("loading_embedding_model", model=settings.embedding_model)
-        _EMBEDDING_MODEL = SentenceTransformer(
-            settings.embedding_model,
-            device="cpu",
-        )
+        _EMBEDDING_MODEL = SentenceTransformer(settings.embedding_model, device="cpu")
     return _EMBEDDING_MODEL
 
 
