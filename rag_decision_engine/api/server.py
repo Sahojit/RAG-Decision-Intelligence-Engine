@@ -28,13 +28,22 @@ class IngestRequest(BaseModel):
     texts: list[str] = Field(default_factory=list)
     file_paths: list[str] = Field(default_factory=list)
     force_reingest: bool = False
-def _background_load() -> None:
-    global _ready, _decision_service, _ingest_pipeline
-    try:
+def _get_ingest_pipeline():
+    global _ingest_pipeline
+    if _ingest_pipeline is None:
         from rag_decision_engine.data_pipeline.ingest import IngestionPipeline
+        _ingest_pipeline = IngestionPipeline()
+    return _ingest_pipeline
+
+
+def _background_load() -> None:
+    """Load DecisionService at startup (FAISS + BM25 only — no PyTorch).
+    The embedding model inside VectorRetriever is deferred to the first
+    actual encode call, keeping startup RSS well below 512 MB."""
+    global _ready, _decision_service
+    try:
         from rag_decision_engine.services.decision_service import DecisionService
         _decision_service = DecisionService()
-        _ingest_pipeline = IngestionPipeline()
         logger.info("services_ready")
     except Exception as exc:
         logger.error("services_load_failed", error=str(exc))
@@ -96,7 +105,7 @@ def create_app() -> FastAPI:
         if not sources:
             raise HTTPException(status_code=422, detail="Provide at least one text or file_path.")
         try:
-            summary = _ingest_pipeline.ingest(sources, force_reingest=body.force_reingest)
+            summary = _get_ingest_pipeline().ingest(sources, force_reingest=body.force_reingest)
             _metrics["ingest_count"] += summary.get("ingested_documents", 0)
             return {"status": "accepted", **summary}
         except Exception as exc:

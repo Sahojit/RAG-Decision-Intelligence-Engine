@@ -37,7 +37,9 @@ class RetrievedDocument:
     retriever: str = "unknown"
 class VectorRetriever:
     def __init__(self) -> None:
-        self._model = _get_embedding_model()
+        # Embedding model is NOT loaded here — deferred to first _embed() call.
+        # Loading torch + weights at __init__ time causes OOM on 512 MB hosts because
+        # both DecisionService and IngestionPipeline create a VectorRetriever at startup.
         self._index: Optional[faiss.Index] = None
         self._metadata: list[dict] = []
         self._load_or_create_index()
@@ -101,7 +103,7 @@ class VectorRetriever:
     def document_count(self) -> int:
         return self._index.ntotal if self._index else 0
     def _embed(self, texts: list[str]) -> np.ndarray:
-        return self._model.encode(
+        return _get_embedding_model().encode(
             texts,
             batch_size=settings.embedding_batch_size,
             show_progress_bar=False,
