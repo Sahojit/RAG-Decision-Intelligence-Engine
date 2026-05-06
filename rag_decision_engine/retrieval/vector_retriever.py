@@ -9,6 +9,24 @@ from sentence_transformers import SentenceTransformer
 from rag_decision_engine.config import settings
 from rag_decision_engine.config.logging_config import get_logger
 logger = get_logger(__name__)
+
+# Single SentenceTransformer instance shared across all VectorRetriever instances in the
+# process. DecisionService and IngestionPipeline both create a VectorRetriever; without
+# this singleton they each load the model separately, doubling peak RSS and causing OOM
+# on memory-constrained deployments.
+_EMBEDDING_MODEL: Optional[SentenceTransformer] = None
+
+def _get_embedding_model() -> SentenceTransformer:
+    global _EMBEDDING_MODEL
+    if _EMBEDDING_MODEL is None:
+        logger.info("loading_embedding_model", model=settings.embedding_model)
+        _EMBEDDING_MODEL = SentenceTransformer(
+            settings.embedding_model,
+            device="cpu",
+        )
+    return _EMBEDDING_MODEL
+
+
 @dataclass
 class RetrievedDocument:
     chunk_id: str
@@ -19,7 +37,7 @@ class RetrievedDocument:
     retriever: str = "unknown"
 class VectorRetriever:
     def __init__(self) -> None:
-        self._model = SentenceTransformer(settings.embedding_model)
+        self._model = _get_embedding_model()
         self._index: Optional[faiss.Index] = None
         self._metadata: list[dict] = []
         self._load_or_create_index()
