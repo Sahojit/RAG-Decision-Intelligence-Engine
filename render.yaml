@@ -1,0 +1,136 @@
+# Render Blueprint — Evidentia: RAG Decision Engine
+# Deploys: PostgreSQL + FastAPI (API) + Streamlit (Dashboard) + MLflow
+# Note: Ollama is not available on Render; LLM reasoning uses built-in fallback.
+
+databases:
+  - name: rag-postgres
+    databaseName: rag_decision_engine
+    user: postgres
+    plan: free           # upgrade to "starter" or above for production workloads
+    region: oregon
+
+services:
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  - type: web
+    name: rag-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: oregon
+    plan: standard       # 2 GB RAM — needed for sentence-transformers + XGBoost
+    healthCheckPath: /health
+
+    disk:
+      name: rag-data
+      mountPath: /app/data
+      sizeGB: 10         # persists FAISS index, uploaded docs, HuggingFace model cache
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+
+      # PostgreSQL — injected from Render managed DB
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: rag-postgres
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: rag-postgres
+          property: port
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: rag-postgres
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: rag-postgres
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: rag-postgres
+          property: password
+
+      # Ollama — not available on Render; API falls back gracefully
+      - key: OLLAMA_BASE_URL
+        value: ""
+      - key: OLLAMA_MODEL
+        value: llama3
+
+      # MLflow — file-based on persistent disk (no separate server needed for inference)
+      - key: MLFLOW_TRACKING_URI
+        value: /app/data/mlruns
+      - key: MLFLOW_EXPERIMENT
+        value: evidence-reliability
+
+      # HuggingFace cache — store on persistent disk so models survive restarts
+      - key: HF_HOME
+        value: /app/data/hf_cache
+      - key: TRANSFORMERS_CACHE
+        value: /app/data/hf_cache
+
+      # Memory optimisation — lighter NLI model (~117 MB vs ~560 MB for deberta-v3-small)
+      # cross-encoder/nli-MiniLM2-L6-H768 keeps accuracy while fitting within 2 GB RAM
+      - key: NLI_MODEL
+        value: cross-encoder/nli-MiniLM2-L6-H768
+
+      # PyTorch thread limits — single worker needs only 1 thread; extra threads waste RSS
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
+
+      # Reduce peak memory during batch embedding
+      - key: EMBEDDING_BATCH_SIZE
+        value: "16"
+
+      # Retrieval tuning
+      - key: ML_MODEL_TYPE
+        value: xgboost
+      - key: RETRIEVAL_TOP_K
+        value: "20"
+      - key: RERANK_TOP_K
+        value: "10"
+      - key: CONTRADICTION_THRESHOLD
+        value: "0.5"
+
+  # ── Streamlit Dashboard ────────────────────────────────────────────────────
+  - type: web
+    name: rag-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile.dashboard
+    dockerContext: .
+    region: oregon
+    plan: starter        # 512 MB RAM — sufficient for Streamlit UI
+
+    envVars:
+      - key: API_URL
+        fromService:
+          name: rag-api
+          type: web
+          property: url   # resolves to https://rag-api.onrender.com at deploy time
+
+  # ── MLflow Tracking Server ────────────────────────────────────────────────
+  - type: web
+    name: rag-mlflow
+    runtime: docker
+    dockerfilePath: ./Dockerfile.mlflow
+    dockerContext: .
+    region: oregon
+    plan: starter
+
+    disk:
+      name: mlflow-data
+      mountPath: /mlflow
+      sizeGB: 5
+
+    envVars:
+      - key: MLFLOW_BACKEND_URI
+        value: sqlite:////mlflow/mlflow.db
+      - key: MLFLOW_ARTIFACT_ROOT
+        value: /mlflow/artifacts
